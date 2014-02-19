@@ -18,7 +18,7 @@ var settings = {
   credentials_file: process.env.OPD_CRED_FILE ? process.env.OPD_CRED_FILE : path.join(__dirname,'.credentials.json')
 };
 
-
+server.use(restify.bodyParser({ mapParams: false, keepExtensions: true }));
 
 // Require all routes
 require("fs").readdirSync(__dirname+"/routes").forEach(function(file) {

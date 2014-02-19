@@ -12,7 +12,7 @@ module.exports = function(server, settings) {
     res.json(true);
   });
 
-  server.delete('/v0/places/:id', function(req, res, next) {
+  server.del('/v0/places/:id', function(req, res, next) {
     res.json(true);
   });
 
