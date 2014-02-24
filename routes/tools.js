@@ -35,7 +35,7 @@ module.exports = function(server, settings) {
     }
     
     if(errors.length > 0) {
-      console.log('we have errors');
+      //console.log('we have errors');
       return res.send(api.format_return(400,errors));
     }
 
@@ -62,19 +62,130 @@ module.exports = function(server, settings) {
 
   server.post('/v0/tools/warp', function(req, res, next) {
 
-    var imagePath = req.files.image.path,
-        tmpPath = imagePath + '.vrt',
-        outputPath = tmpPath + '.tif',
-        gcpString = '';
+    var imagePath,
+        tmpPath,
+        outputPath,
+        gcpObj,
+        gcpString = '',
+        memoryLimit = '',
+        transformOption = '', // auto -> , p1 -> -order 1, p2 -> -order 2, p3 -> -order 3, tps -> -tps, 
+        resampleOption = '-rn', // near -> -rn, bilinear -> -rb, cubic -> -rc, cubicspline -> -rcs
+        maskOption = '', // -srcnodata '17 17 17' and use masked file
+        errors = [];
 
-    var command = util.format("gdal_translate -a_srs WGS84 -of VRT %s %s %s", imagePath, tmpPath, gcpString);
+    // Set image and output paths
+    if(req.files.image && req.files.image.path) {
+      imagePath = req.files.image.path;
+      tmpPath = imagePath + '.vrt';
+      outputPath = imagePath + '.tif';
+    } else {
+      errors.push('image is required to be a file');
+    }
 
-    var command = util.format("gdalwarp %s %s %s -dstalpha %s -s_srs WGS84 %s %s -co TILED=YES -co COMPRESS=LZW", memoryLimit, transformOption, resampleOption, maskOption, tmpPath, outputPath);
+    // Get gcp
+    if(req.body.gcp) {
+      try {
+        gcpObj = JSON.parse(req.body.gcp);
+      } catch(e) {
+        errors.push('gcp must be a valid json object');
+      }
 
+      if(gcpObj) {
+        errors = errors.concat(validateGCP(gcpObj));
+      }
+
+    } else {
+      errors.push('gcp is required');
+    }
+
+    if(errors.length > 0) {
+      console.log('we have errors');
+      return res.send(api.format_return(400,errors));
+    }
+
+    // Create gcpString
+    for(var x in gcpObj) {
+      gcpString += '-gcp '+gcpObj[x].x+' '+gcpObj[x].y+' '+gcpObj[x].lat+' '+gcpObj[x].lon+' ';
+    }
+
+    // Define commands
+    var translateCommand = util.format("gdal_translate -a_srs WGS84 -of VRT %s %s %s", imagePath, tmpPath, gcpString);
+    
+    // check for colorinterop=pal ? -disnodata 255 or -dstalpha
+    var warpCommand = util.format("gdalwarp %s %s %s -dstalpha %s -s_srs WGS84 %s %s -co TILED=YES -co COMPRESS=JPEG -co JPEG_QUALITY=85",
+          memoryLimit,
+          transformOption,
+          resampleOption,
+          maskOption,
+          tmpPath,
+          outputPath);
     // We may not need this one?
-    var command = util.format("gdaladdo -r average %s 2 4 8 16 32 64", outputPath);
+    var addoCommand = util.format("gdaladdo -r average %s 2 4 8 16 32 64", outputPath);
 
-    res.json(true);
+    // Translate image to VRT format
+    exec(translateCommand, function(error, stdout, stderr) {
+      if(error) {
+        // Error Out
+        res.json(error);
+      } else {
+
+        exec(warpCommand, function(error, stdout, stderr) {
+          if(error) {
+            // Error Out
+            res.json(error);
+          } else {
+            // Set headers and pipe image to output
+            var stream = fs.createReadStream(outputPath);
+
+            res.setHeader('content-type', 'image/tiff');
+            stream.pipe(res);
+          }
+        }); // End warp
+      }
+    }); // End translate
+
   });
+
+  function validateGCP(json) {
+    var errors = [];
+    // json must be an array
+    if(!_.isArray(json)) {
+      return ['gcp must be an array of gcp objects'];
+    }
+
+    // Each element must have the proper values
+    for(var x in json) {
+      var gcp = json[x];
+      if(!_.isObject(gcp)) {
+        errors.push('gcp['+x+'] is not an object');
+        continue;
+      }
+      
+      if(_.intersection(Object.keys(gcp),['lat','lon','x','y']).length != 4) {
+        errors.push('gcp['+x+'] must contain x, y lat, and lon elements');
+        continue;
+      }
+      if(!_.isFinite(gcp.x) || gcp.x < 0) {
+        errors.push('gcp['+x+'].x must be a number >= 0');
+      }
+      if(!_.isFinite(gcp.y) || gcp.y < 0) {
+        errors.push('gcp['+x+'].y must be a number >= 0');
+      }
+      if(!_.isFinite(gcp.lat) || gcp.lat < -90 || gcp.lat > 90) {
+        errors.push('gcp['+x+'].lat must be a number between -90 and 90');
+      }
+      if(!_.isFinite(gcp.lon) || gcp.lon < -180 || gcp.lon > 180) {
+        errors.push('gcp['+x+'].lon must be a number between -180 and 180');
+      }
+
+    }
+
+    // Require at least 3 control points
+    if(json.length < 3) {
+      errors.push('You must specify at least 3 control points');
+    }
+
+    return errors;
+  }
 
 };
