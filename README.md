@@ -52,6 +52,11 @@ This set of instructions is for installing the API only. To install a full OPD i
     }
     ````
 
+1. Install [GDAL](http://www.gdal.org/)
+    ````bash
+    sudo apt-get install gdal
+    ````
+
 1. run `npm install` while in `<root_dir>`
 
 1. Run the Open Place Database by typing `node <root_dir>/app.js`. It will bind to port 8080 by default.
